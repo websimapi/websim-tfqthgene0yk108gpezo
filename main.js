@@ -105,7 +105,6 @@ const wss = new WebSocket.Server({ server });
 let llamaProcess = null;
 let llamaStatus = 'Not Initialized';
 
-// Download and setup LLaMA
 async function downloadLlama() {
   const llamaUrl = 'https://huggingface.co/Mozilla/llava-v1.5-7b-llamafile/resolve/main/llava-v1.5-7b-q4.llamafile?download=true';
   const llamaPath = path.join(__dirname, 'llava-v1.5-7b-q4.llamafile');
@@ -238,8 +237,7 @@ server.listen(port, () => {
       dependencies: {
         express: "^4.17.1",
         ws: "^8.2.3",
-        cors: "^2.8.5",
-        node-fetch: "^2.6.7"
+        cors: "^2.8.5"
       }
     };
   }
