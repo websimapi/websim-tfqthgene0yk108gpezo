@@ -49,16 +49,12 @@ function startLlama() {
     }
   }
 
-  // On Windows, we need to add .exe extension
-  const executablePath = process.platform === 'win32' 
-    ? `${llamaPath}.exe` 
-    : llamaPath;
-
-  // Use spawn instead of exec for better process control and output streaming
-  llamaProcess = spawn(executablePath, ['--server', '--host', '127.0.0.1', '--port', '8080'], {
+  // Launch llama process with correct arguments
+  llamaProcess = spawn(llamaPath, ['--server', '--port', '8080'], {
     stdio: ['pipe', 'pipe', 'pipe']
   });
 
+  // Handle process stdout
   llamaProcess.stdout.on('data', (data) => {
     const output = data.toString();
     console.log('LLaMA output:', output);
@@ -68,22 +64,34 @@ function startLlama() {
     }
   });
 
+  // Handle process stderr
   llamaProcess.stderr.on('data', (data) => {
-    console.error('LLaMA error:', data.toString());
+    const output = data.toString();
+    console.error('LLaMA error:', output);
+    if (output.includes('error')) {
+      llamaStatus = 'Error';
+      broadcastToAll({ type: 'llamaStatus', status: llamaStatus });
+    }
   });
 
+  // Handle process errors
   llamaProcess.on('error', (error) => {
     console.error('Failed to start LLaMA process:', error);
     llamaStatus = 'Error';
     broadcastToAll({ type: 'llamaStatus', status: llamaStatus });
   });
 
+  // Handle process exit
   llamaProcess.on('exit', (code, signal) => {
     console.log(`LLaMA process exited with code ${code} and signal ${signal}`);
     llamaStatus = 'Stopped';
     broadcastToAll({ type: 'llamaStatus', status: llamaStatus });
     llamaProcess = null;
   });
+
+  // Set initial status
+  llamaStatus = 'Initializing';
+  broadcastToAll({ type: 'llamaStatus', status: llamaStatus });
 }
 
 function broadcastToAll(message) {
@@ -103,6 +111,12 @@ wss.on('connection', (ws) => {
     
     if (data.type === 'prompt') {
       try {
+        // Make sure llama is ready
+        if (llamaStatus !== 'Ready') {
+          throw new Error('LLaMA is not ready');
+        }
+
+        // Call the llama completion API
         const response = await fetch('http://localhost:8080/completion', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -114,7 +128,7 @@ wss.on('connection', (ws) => {
         });
         
         if (!response.ok) {
-          throw new Error('Failed to get response from LLaMA');
+          throw new Error(`Failed to get response from LLaMA: ${response.statusText}`);
         }
 
         const result = await response.json();
@@ -133,7 +147,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Initialize server
+// Initialize server and start llama
 console.log('Starting server...');
 startLlama();
 
@@ -149,10 +163,18 @@ server.listen(port, () => {
 function cleanup() {
   if (llamaProcess) {
     console.log('Shutting down LLaMA process...');
-    llamaProcess.kill('SIGTERM');
+    try {
+      // Send SIGTERM to the process group
+      process.platform === 'win32' ? 
+        llamaProcess.kill() :
+        process.kill(-llamaProcess.pid);
+    } catch (err) {
+      console.error('Error killing LLaMA process:', err);
+    }
   }
 }
 
+// Handle various termination signals
 process.on('SIGINT', () => {
   cleanup();
   process.exit();
