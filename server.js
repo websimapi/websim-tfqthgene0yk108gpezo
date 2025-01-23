@@ -3,7 +3,6 @@ const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
 const fs = require('fs');
-const https = require('https');
 const { exec } = require('child_process');
 const path = require('path');
 
@@ -19,86 +18,37 @@ const wss = new WebSocket.Server({ server });
 let llamaProcess = null;
 let llamaStatus = 'Not Initialized';
 
-async function downloadLlama() {
-  const llamaUrl = 'https://huggingface.co/Mozilla/llava-v1.5-7b-llamafile/resolve/main/llava-v1.5-7b-q4.llamafile';
+function checkLlamaFile() {
   const llamaPath = path.join(__dirname, 'llava-v1.5-7b-q4.llamafile');
-
-  // Check if file already exists and is not empty
-  if (fs.existsSync(llamaPath)) {
-    const stats = fs.statSync(llamaPath);
-    if (stats.size > 0) {
-      console.log('LLaMA file already exists, skipping download');
-      return Promise.resolve();
-    }
-  }
-
-  return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(llamaPath);
-    
-    const request = https.get(llamaUrl, (response) => {
-      // Handle redirects
-      if (response.statusCode === 302 || response.statusCode === 301) {
-        https.get(response.headers.location, (redirectResponse) => {
-          const totalBytes = parseInt(redirectResponse.headers['content-length'], 10);
-          let downloadedBytes = 0;
-
-          redirectResponse.pipe(file);
-
-          redirectResponse.on('data', (chunk) => {
-            downloadedBytes += chunk.length;
-            const progress = (downloadedBytes / totalBytes) * 100;
-            broadcastToAll({
-              type: 'downloadProgress',
-              progress: Math.round(progress)
-            });
-          });
-
-          file.on('finish', () => {
-            file.close();
-            fs.chmodSync(llamaPath, '755');
-            resolve();
-          });
-        }).on('error', (err) => {
-          fs.unlink(llamaPath, () => {}); // Delete the file on error
-          reject(err);
-        });
-      } else {
-        // Direct download without redirect
-        const totalBytes = parseInt(response.headers['content-length'], 10);
-        let downloadedBytes = 0;
-
-        response.pipe(file);
-
-        response.on('data', (chunk) => {
-          downloadedBytes += chunk.length;
-          const progress = (downloadedBytes / totalBytes) * 100;
-          broadcastToAll({
-            type: 'downloadProgress',
-            progress: Math.round(progress)
-          });
-        });
-
-        file.on('finish', () => {
-          file.close();
-          fs.chmodSync(llamaPath, '755');
-          resolve();
-        });
-      }
-    }).on('error', (err) => {
-      fs.unlink(llamaPath, () => {}); // Delete the file on error
-      reject(err);
-    });
-
-    request.on('error', (err) => {
-      fs.unlink(llamaPath, () => {}); // Delete the file on error
-      reject(err);
-    });
-  });
+  return fs.existsSync(llamaPath);
 }
 
 function startLlama() {
   const llamaPath = path.join(__dirname, 'llava-v1.5-7b-q4.llamafile');
-  // Use proper shell command formatting
+  
+  // First check if file exists
+  if (!checkLlamaFile()) {
+    console.log('LLaMA file not found. User needs to download it.');
+    llamaStatus = 'Not Found';
+    broadcastToAll({ 
+      type: 'llamaStatus', 
+      status: llamaStatus 
+    });
+    broadcastToAll({ 
+      type: 'needsDownload'
+    });
+    return;
+  }
+
+  // Set executable permissions on Unix-like systems
+  if (process.platform !== 'win32') {
+    try {
+      fs.chmodSync(llamaPath, '755');
+    } catch (error) {
+      console.error('Error setting executable permissions:', error);
+    }
+  }
+  
   llamaProcess = exec(`"${llamaPath}" --server --port 8080`, {
     shell: true,
     windowsHide: true
@@ -171,23 +121,9 @@ wss.on('connection', (ws) => {
   });
 });
 
-async function initialize() {
-  try {
-    llamaStatus = 'Downloading';
-    broadcastToAll({ type: 'llamaStatus', status: llamaStatus });
-    await downloadLlama();
-    
-    llamaStatus = 'Initializing';
-    broadcastToAll({ type: 'llamaStatus', status: llamaStatus });
-    startLlama();
-  } catch (error) {
-    console.error('Error initializing LLaMA:', error);
-    llamaStatus = 'Error';
-    broadcastToAll({ type: 'llamaStatus', status: llamaStatus });
-  }
-}
-
-initialize();
+// Initialize server
+console.log('Starting server...');
+startLlama();
 
 app.get('/', (req, res) => {
   res.send('Node.js WebSocket Server Running with LLaMA Integration');

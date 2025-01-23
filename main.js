@@ -40,10 +40,28 @@ class ServerGenerator {
       case 'llamaResponse':
         this.displayResponse(data.response);
         break;
+      case 'needsDownload':
+        this.handleLlamaDownloadRequired();
+        break;
       case 'downloadProgress':
         this.updateDownloadProgress(data.progress);
         break;
     }
+  }
+
+  handleLlamaDownloadRequired() {
+    const llamaUrl = 'https://huggingface.co/Mozilla/llava-v1.5-7b-llamafile/resolve/main/llava-v1.5-7b-q4.llamafile?download=true';
+    window.open(llamaUrl, '_blank');
+    
+    const responseDiv = document.getElementById('response');
+    responseDiv.innerHTML = `
+      <div class="download-instructions">
+        <p>The LLaMA file is not found in the project directory.</p>
+        <p>A new tab has been opened to download the file.</p>
+        <p>Once downloaded, please move the file "llava-v1.5-7b-q4.llamafile" into the project directory.</p>
+        <p>After moving the file, restart the server to initialize LLaMA.</p>
+      </div>
+    `;
   }
 
   updateLlamaStatus(status) {
