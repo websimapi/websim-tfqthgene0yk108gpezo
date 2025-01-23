@@ -3,7 +3,7 @@ const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
 const fs = require('fs');
-const { exec } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
 
 const app = express();
@@ -48,22 +48,28 @@ function startLlama() {
       console.error('Error setting executable permissions:', error);
     }
   }
-  
-  llamaProcess = exec(`"${llamaPath}" --server --port 8080`, {
-    shell: true,
-    windowsHide: true
+
+  // On Windows, we need to add .exe extension
+  const executablePath = process.platform === 'win32' 
+    ? `${llamaPath}.exe` 
+    : llamaPath;
+
+  // Use spawn instead of exec for better process control and output streaming
+  llamaProcess = spawn(executablePath, ['--server', '--host', '127.0.0.1', '--port', '8080'], {
+    stdio: ['pipe', 'pipe', 'pipe']
   });
-  
+
   llamaProcess.stdout.on('data', (data) => {
-    console.log('LLaMA output:', data);
-    if (data.includes('server listening')) {
+    const output = data.toString();
+    console.log('LLaMA output:', output);
+    if (output.includes('server listening')) {
       llamaStatus = 'Ready';
       broadcastToAll({ type: 'llamaStatus', status: llamaStatus });
     }
   });
 
   llamaProcess.stderr.on('data', (data) => {
-    console.error('LLaMA error:', data);
+    console.error('LLaMA error:', data.toString());
   });
 
   llamaProcess.on('error', (error) => {
@@ -76,6 +82,7 @@ function startLlama() {
     console.log(`LLaMA process exited with code ${code} and signal ${signal}`);
     llamaStatus = 'Stopped';
     broadcastToAll({ type: 'llamaStatus', status: llamaStatus });
+    llamaProcess = null;
   });
 }
 
@@ -106,12 +113,17 @@ wss.on('connection', (ws) => {
           })
         });
         
+        if (!response.ok) {
+          throw new Error('Failed to get response from LLaMA');
+        }
+
         const result = await response.json();
         ws.send(JSON.stringify({
           type: 'llamaResponse',
           response: result.content
         }));
       } catch (error) {
+        console.error('Error processing prompt:', error);
         ws.send(JSON.stringify({
           type: 'llamaResponse',
           response: 'Error processing prompt: ' + error.message
@@ -133,17 +145,22 @@ server.listen(port, () => {
   console.log(`Server running at http://localhost:${port}`);
 });
 
-// Cleanup on process exit
-process.on('SIGINT', () => {
+// Handle process termination
+function cleanup() {
   if (llamaProcess) {
-    llamaProcess.kill();
+    console.log('Shutting down LLaMA process...');
+    llamaProcess.kill('SIGTERM');
   }
+}
+
+process.on('SIGINT', () => {
+  cleanup();
   process.exit();
 });
 
 process.on('SIGTERM', () => {
-  if (llamaProcess) {
-    llamaProcess.kill();
-  }
+  cleanup();
   process.exit();
 });
+
+process.on('exit', cleanup);
